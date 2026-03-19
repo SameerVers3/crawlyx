@@ -25,12 +25,12 @@ A fast, multi-threaded web crawler.
 - [ ] Fast non-cryptographic hash function (FxHash or AHash)
 
 ### URL Normalization
-- [ x ] Lowercase scheme and host
-- [ x ] Resolve relative URLs against base URL of the page
-- [ ] Remove default ports
-- [ ] Remove fragments
-- [ ] Sort query parameters
-- [ ] Trailing slash consistency
+- [x] Lowercase scheme and host
+- [x] Resolve relative URLs against base URL of the page
+- [x] Remove default ports
+- [x] Remove fragments
+- [x] Sort query parameters
+- [x] Trailing slash consistency
 
 ### HTTP Fetcher
 - [ ] Fetch page by URL
