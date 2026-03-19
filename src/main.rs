@@ -1,3 +1,5 @@
+mod normalizer;
+
 fn main() {
-    println!("Hello, world!");
+    println!("Hello, Crawlyx!");
 }
