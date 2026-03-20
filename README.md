@@ -20,9 +20,9 @@ A fast, multi-threaded web crawler.
 - [ ] Unit of work: (url, current_depth, target_depth, parent_node_reference)
 
 ### Visited Page Hashtable
-- [ ] Sharded RwLock
-- [ ] Power of 2 shards with bitmasking for bucket lookup
-- [ ] Fast non-cryptographic hash function (FxHash or AHash)
+- [x] Sharded RwLock
+- [x] Power of 2 shards with bitmasking for bucket lookup
+- [x] Fast non-cryptographic hash function (FxHash or AHash) [used AHash]
 
 ### URL Normalization
 - [x] Lowercase scheme and host
