@@ -7,12 +7,17 @@ use crawlyx_rs::{
     scheduler::Scheduler,
 };
 
-fn main() {
-    let seed     = "https://www.wikipedia.org/".to_string();
-    let workers  = 8;
-    let depth    = 3;
 
-    let queue     = InProcessQueue::new(1024);
+fn main() {
+    //console_subscriber::init();
+    
+    let seed     = "http://localhost:8080/site/0/1".to_string();
+    let workers  = 16;
+    let depth    = 5;
+
+    println!("Started");
+
+    let queue     = InProcessQueue::new(512);
     let hashtable = Arc::new(VisitedTable::new());
     let graph     = Arc::new(Graph::new(seed.clone()));
 
