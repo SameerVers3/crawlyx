@@ -6,7 +6,7 @@ A fast, multi-threaded web crawler.
 
 ### Queue
 - [x] In-process circular queue
-- [ ] Waiting list for when queue is full
+- [x] Waiting list for when queue is full
 - [ ] Redis queue option (multi-machine)
 
 ### Dispatcher / Scheduler
@@ -33,8 +33,8 @@ A fast, multi-threaded web crawler.
 - [x] Trailing slash consistency
 
 ### HTTP Fetcher
-- [ ] Fetch page by URL
-- [ ] Handle redirects
+- [x] Fetch page by URL
+- [x] Handle redirects
 
 ### HTML Parser
 - [ ] Custom self-written parser
@@ -43,9 +43,9 @@ A fast, multi-threaded web crawler.
 - [ ] Extract and return URLs
 
 ### Graph (Current Crawl State)
-- [ ] Graph data structure
-- [ ] Per-node locks
-- [ ] Lock ordering by node ID (ascending) to prevent deadlocks
+- [x] Graph data structure
+- [x] Per-node locks
+- [x] Lock ordering by node ID (ascending) to prevent deadlocks
 
 ### Tree (Post-Crawl)
 - [ ] Derive tree from graph after full crawl

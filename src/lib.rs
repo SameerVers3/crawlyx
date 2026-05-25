@@ -3,3 +3,4 @@ pub mod hashtable;
 pub mod graph;
 pub mod queue;
 pub mod fetcher;
+pub mod parser;
