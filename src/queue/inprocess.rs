@@ -109,6 +109,7 @@ mod tests {
             current_depth: 0,
             target_depth: 3,
             parent_node: None,
+            shutdown: false,
         }
     }
 
