@@ -8,6 +8,29 @@ pub struct WorkUnit {
     pub current_depth: usize,
     pub target_depth: usize,
     pub parent_node: Option<Node>,
+    pub shutdown: bool,
+}
+
+impl WorkUnit {
+    pub fn new(url: String, current_depth: usize, target_depth: usize, parent_node: Option<Node>) -> Self {
+        Self {
+            url,
+            current_depth,
+            target_depth,
+            parent_node, 
+            shutdown: false
+        }
+    }
+
+    pub fn shutdown() -> Self {
+        Self {
+            url: String::new(),
+            current_depth: 0,
+            target_depth: 0,
+            parent_node: None,
+            shutdown: true,
+        }
+    }
 }
 
 pub trait Queue: Send + Sync {

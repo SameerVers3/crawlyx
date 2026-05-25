@@ -36,11 +36,11 @@ A fast, multi-threaded web crawler.
 - [x] Fetch page by URL
 - [x] Handle redirects
 
-### HTML Parser
-- [ ] Custom self-written parser
-- [ ] Build DOM tree
-- [ ] Walk nodes with links (a, base, iframe, etc.)
-- [ ] Extract and return URLs
+### HTML Parser (cancelled => now just writing a wraper of scraper)
+- [ ] Custom self-written parser (cancelled)
+- [ ] Build DOM tree (cancelled)
+- [x] Walk nodes with links (a, base, iframe, etc.)
+- [x] Extract and return URLs
 
 ### Graph (Current Crawl State)
 - [x] Graph data structure
