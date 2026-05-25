@@ -5,7 +5,7 @@ A fast, multi-threaded web crawler.
 ## Implementation Status
 
 ### Queue
-- [ ] In-process circular queue
+- [x] In-process circular queue
 - [ ] Waiting list for when queue is full
 - [ ] Redis queue option (multi-machine)
 
