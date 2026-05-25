@@ -189,24 +189,6 @@ mod tests {
         assert_eq!(node.lock().unwrap().data, Some("<html>...</html>".to_string()));
     }
 
-    #[test]
-    fn add_edge_links_parent_and_child() {
-        let g = Graph::new("https://root.com".to_string());
-        let parent = g.get_node("https://root.com").unwrap();
-        let child  = g.add_node("https://child.com".to_string(), None, 1);
-
-        g.add_edge(&parent, &child);
-
-        // parent should have child in its children list
-        let parent_children = parent.lock().unwrap();
-        assert_eq!(parent_children.children.len(), 1);
-        assert_eq!(parent_children.children[0].lock().unwrap().url, "https://child.com");
-
-        // child should have parent in its parents list
-        let child_parents = child.lock().unwrap();
-        assert_eq!(child_parents.parents.len(), 1);
-        assert_eq!(child_parents.parents[0].lock().unwrap().url, "https://root.com");
-    }
 
     #[test]
     fn add_edge_no_duplicate_edges() {
@@ -235,6 +217,30 @@ mod tests {
     }
 
     #[test]
+    fn add_edge_links_parent_and_child() {
+
+        let g = Graph::new("https://root.com".to_string());
+        let parent = g.get_node("https://root.com").unwrap();
+        let child  = g.add_node("https://child.com".to_string(), None, 1);
+        g.add_edge(&parent, &child);
+
+        {
+            let p = parent.lock().unwrap();
+            assert_eq!(p.children.len(), 1);
+            let child_url = p.children[0].lock().unwrap().url.clone();
+            assert_eq!(child_url, "https://child.com");
+        }  
+
+
+        {
+            let c = child.lock().unwrap();
+            assert_eq!(c.parents.len(), 1);
+            let parent_url = c.parents[0].lock().unwrap().url.clone();
+            assert_eq!(parent_url, "https://root.com");
+        }
+    }
+
+    #[test]
     fn concurrent_add_edge_does_not_deadlock() {
         let g = Arc::new(Graph::new("https://root.com".to_string()));
         let a = g.add_node("https://a.com".to_string(), None, 1);
@@ -253,7 +259,7 @@ mod tests {
             g1.add_edge(&a1, &b1);
         });
 
-        // T2: add B to A (opposite direction -> deadlock hehe)
+        // T3: add B to A (opposite direction => deadlock hehe)
         let t2 = thread::spawn(move || {
             g2.add_edge(&b2, &a2);
         });
@@ -261,11 +267,4 @@ mod tests {
         t1.join().unwrap();
         t2.join().unwrap();
     }
-}
-
-
-
-
-
-
-
+}    

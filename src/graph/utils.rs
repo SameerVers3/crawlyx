@@ -10,5 +10,5 @@ static NODE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 
 pub fn new_id() -> usize {
-    NODE_COUNTER.fetch_add(0, Ordering::Relaxed)
+    NODE_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
