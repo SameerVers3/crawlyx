@@ -36,7 +36,7 @@ impl CrawlConfig {
             allow_subdomains: false,
             allowed_domains: vec![],
             blocked_paths: vec![],
-            output_format: OutputFormat::Html,
+            output_format: OutputFormat::Markdown,
             respect_robots_txt: false,
             crawl_delay: None,
             user_agent: "crawlyx-rs/0.1".to_string(),

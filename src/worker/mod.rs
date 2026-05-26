@@ -55,10 +55,20 @@ impl Worker {
             };
 
             // Output processing hook.
-            // TODO : I will change the MarkDown to htmd lib output
             let content = match self.config.output_format {
                 OutputFormat::Html => fetched_html,
-                OutputFormat::Markdown => fetched_html,
+                OutputFormat::Markdown => {
+                    match htmd::convert(&fetched_html) {
+                        Ok(markdown) => markdown,
+                        Err(e) => {
+                            eprintln!(
+                                "[worker {}] htmd conversion error for {}: {:?}",
+                                self.id, work.url, e
+                            );
+                            fetched_html
+                        }
+                    }
+                }
             };
 
             let discovered_urls = parser::extract_urls(&content, &work.url);
