@@ -4,7 +4,7 @@ use crate::config::{CrawlConfig, OutputFormat};
 use crate::fetcher::Fetcher;
 use crate::graph::Node;
 use crate::parser;
-use crate::queue::{Queue, WorkUnit};
+use crate::queue::{Queue};
 
 pub struct WorkerResult {
     pub url: String,

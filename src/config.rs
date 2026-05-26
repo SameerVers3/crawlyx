@@ -26,7 +26,6 @@ pub struct CrawlConfig {
 }
 
 impl CrawlConfig {
-    /// Reasonable defaults for local benchmarking / development.
     pub fn new(start_url: impl Into<String>) -> Self {
         Self {
             start_url: start_url.into(),

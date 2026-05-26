@@ -2,6 +2,22 @@
 
 A fast, multi-threaded web crawler.
 
+## CLI usage
+
+The binary is named `crawlyx`.
+
+Example:
+
+```bash
+cargo run --release -- --url https://example.com --depth 2 --workers 32 --format markdown
+```
+
+See all options:
+
+```bash
+cargo run -- --help
+```
+
 ## Implementation Status
 
 ### Queue
