@@ -1,6 +1,7 @@
 
 use std::sync::Arc;
 use crawlyx_rs::{
+    config::{CrawlConfig, OutputFormat},
     graph::Graph,
     hashtable::VisitedTable,
     queue::inprocess::InProcessQueue,
@@ -17,6 +18,13 @@ fn main() {
     let workers  = 32;
     let depth    = 6;
 
+    // Global crawl configuration (shared across scheduler/workers).
+    // Later will add Clap CLI args
+    let mut config = CrawlConfig::new(seed.clone());
+    config.max_depth = depth;
+    config.output_format = OutputFormat::Html;
+    let config = Arc::new(config);
+
     println!("Started");
     let start = Instant::now();
 
@@ -24,7 +32,7 @@ fn main() {
     let hashtable = Arc::new(VisitedTable::new());
     let graph     = Arc::new(Graph::new(seed.clone()));
 
-    let scheduler = Scheduler::new(queue, hashtable, graph, workers, depth);
+    let scheduler = Scheduler::new(queue, hashtable, graph, workers, depth, config);
     scheduler.run(seed);
 
     let duration = start.elapsed();

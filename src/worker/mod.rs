@@ -1,5 +1,6 @@
 use std::sync::{Arc, mpsc};
 
+use crate::config::{CrawlConfig, OutputFormat};
 use crate::fetcher::Fetcher;
 use crate::graph::Node;
 use crate::parser;
@@ -17,11 +18,17 @@ pub struct Worker {
     queue: Arc<dyn Queue>,
     fetcher: Fetcher,
     result_tx: mpsc::Sender<WorkerResult>,
+    config: Arc<CrawlConfig>,
 }
 
 impl Worker {
-    pub fn new(id: usize, queue: Arc<dyn Queue>, result_tx: mpsc::Sender<WorkerResult>) -> Self {
-        Self { id, queue, fetcher: Fetcher::new(), result_tx }
+    pub fn new(
+        id: usize,
+        queue: Arc<dyn Queue>,
+        result_tx: mpsc::Sender<WorkerResult>,
+        config: Arc<CrawlConfig>,
+    ) -> Self {
+        Self { id, queue, fetcher: Fetcher::new(), result_tx, config }
     }
 
     pub fn run(self) {
@@ -32,7 +39,7 @@ impl Worker {
                 break;
             }
 
-            let content = match self.fetcher.fetch(&work.url) {
+            let fetched_html = match self.fetcher.fetch(&work.url) {
                 Ok(html) => html,
                 Err(e) => {
                     eprintln!("[worker {}] fetch error for {}: {:?}", self.id, work.url, e);
@@ -45,6 +52,13 @@ impl Worker {
                     });
                     continue;
                 }
+            };
+
+            // Output processing hook.
+            // TODO : I will change the MarkDown to htmd lib output
+            let content = match self.config.output_format {
+                OutputFormat::Html => fetched_html,
+                OutputFormat::Markdown => fetched_html,
             };
 
             let discovered_urls = parser::extract_urls(&content, &work.url);

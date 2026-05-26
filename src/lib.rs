@@ -6,3 +6,4 @@ pub mod fetcher;
 pub mod parser;
 pub mod worker;
 pub mod scheduler;
+pub mod config;

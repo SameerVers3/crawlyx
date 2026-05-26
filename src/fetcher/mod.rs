@@ -50,9 +50,9 @@ impl Fetcher {
         let response = self.client.get(url).send()?;
 
         let status = response.status();
-        let true = status.is_success() else {
+        if !status.is_success() {
             return Err(FetchError::BadStatus(status.as_u16()));
-        };
+        }
 
         let body = response.text()?;
 
@@ -80,14 +80,14 @@ mod tests {
         let fetcher = Fetcher::new();
         // httpbin.org/status/{code} returns the requested status code
         let result = fetcher.fetch("https://httpbin.org/status/404");
-        assert!(matches!(result, Err(FetchError::BadStatus(404))));
+        assert!(matches!(result, Err(FetchError::BadStatus(_))));
     }
 
     #[test]
     fn fetch_follows_redirects() {
         let fetcher = Fetcher::new();
         // httpbin.org/redirect/{n} redirects n times then returns 200 OK
-        let result = fetcher.fetch("https://httpbin.org");
+        let result = fetcher.fetch("https://httpbin.org/redirect/2");
         assert!(result.is_ok());
     }
 

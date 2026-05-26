@@ -6,6 +6,7 @@ use crate::graph::{Graph, Node};
 use crate::hashtable::VisitedTable;
 use crate::queue::{Queue, WorkUnit};
 use crate::worker::{Worker, WorkerResult};
+use crate::config::CrawlConfig;
 
 pub struct Scheduler {
     queue: Arc<dyn Queue>,
@@ -13,6 +14,7 @@ pub struct Scheduler {
     graph: Arc<Graph>,
     num_workers: usize,
     target_depth: usize,
+    config: Arc<CrawlConfig>,
 }
 
 impl Scheduler {
@@ -22,8 +24,9 @@ impl Scheduler {
         graph: Arc<Graph>,
         num_workers: usize,
         target_depth: usize,
+        config: Arc<CrawlConfig>,
     ) -> Self {
-        Self { queue, hashtable, graph, num_workers, target_depth }
+        Self { queue, hashtable, graph, num_workers, target_depth, config }
     }
 
     pub fn run(&self, seed_url: String) {
@@ -34,7 +37,8 @@ impl Scheduler {
         let handles: Vec<_> = (0..self.num_workers).map(|id| {
             let q  = Arc::clone(&self.queue);
             let tx = result_tx.clone();
-            thread::spawn(move || Worker::new(id, q, tx).run())
+            let config = Arc::clone(&self.config);
+            thread::spawn(move || Worker::new(id, q, tx, config).run())
         }).collect();
 
         drop(result_tx);
