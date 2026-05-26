@@ -40,7 +40,7 @@ impl Scheduler {
         drop(result_tx);
         
 
-        println!("seed enqueued: {}", seed_url);
+        // println!("seed enqueued: {}", seed_url);
         // enqueue the seed
         self.enqueue(seed_url, 0, None, &active);
         
@@ -52,7 +52,7 @@ impl Scheduler {
 
             // store fetched HTML in the graph node
             if let Some(ref node) = result.node {
-                println!("setting content for result node: {}", result.url);
+                // println!("setting content for result node: {}", result.url);
                 self.graph.set_content(node, result.content);
             }
 
@@ -67,7 +67,7 @@ impl Scheduler {
             if current_depth < self.target_depth {
                 for url in result.discovered_urls {
                     
-                    println!("enqueued: {}", url);
+                    // println!("enqueued: {}", url);
                     self.enqueue(url, current_depth + 1, result.node.clone(), &active);
 
 

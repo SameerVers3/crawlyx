@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::RwLock;
 
 pub mod utils;
 use utils::new_id;
@@ -13,12 +14,14 @@ pub struct NodeData {
     pub data: Option<String>,
     pub parents: Vec<Arc<Mutex<NodeData>>>,
     pub children: Vec<Arc<Mutex<NodeData>>>,
+    parent_ids: HashSet<usize>,
+    child_ids: HashSet<usize>,
     pub depth: usize,
 }
 
 #[derive(Debug)]
 pub struct Graph {
-    nodes: Mutex<HashMap<String, Arc<Mutex<NodeData>>>>,
+    nodes: RwLock<HashMap<String, Arc<Mutex<NodeData>>>>,
     root: Option<Arc<Mutex<NodeData>>>,
 }
 
@@ -32,28 +35,24 @@ impl NodeData {
             data,
             parents: Vec::new(),
             children: Vec::new(),
+            parent_ids: HashSet::new(),
+            child_ids: HashSet::new(),
             depth,
         }))
     }
 
     pub fn insert_parent(&mut self, node: Node) {
         let node_id = node.lock().unwrap().id;
-        let already_exists = self.parents
-            .iter()
-            .any(|p| p.lock().unwrap().id == node_id);
-
-        if !already_exists {
+        
+        if self.parent_ids.insert(node_id) {
             self.parents.push(node);
         }
     }
 
     pub fn insert_child(&mut self, node: Node) {
         let node_id = node.lock().unwrap().id;
-        let already_exists = self.children
-            .iter()
-            .any(|c| c.lock().unwrap().id == node_id);
 
-        if !already_exists {
+        if self.child_ids.insert(node_id) {
             self.children.push(node);
         }
     }
@@ -66,13 +65,13 @@ impl Graph {
         map.insert(root_url, Arc::clone(&root_node));
 
         Self {
-            nodes: Mutex::new(map),
+            nodes: RwLock::new(map),
             root: Some(root_node),
         }
     }
 
     pub fn add_node(&self, url: String, data: Option<String>, depth: usize) -> Node {
-        let mut map = self.nodes.lock().unwrap();
+        let mut map = self.nodes.write().unwrap();
 
         if let Some(existing) = map.get(&url) { 
             return Arc::clone(existing);
@@ -84,7 +83,7 @@ impl Graph {
     }
 
     pub fn get_node(&self, url: &str) -> Option<Node> {
-        let map = self.nodes.lock().unwrap();
+        let map = self.nodes.read().unwrap();
         map.get(url).map(Arc::clone)
     }
 
