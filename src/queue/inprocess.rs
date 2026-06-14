@@ -1,106 +1,56 @@
-use std::sync::{Arc, Condvar, Mutex};
+use tokio::sync::mpsc::{self, Sender, Receiver};
+use tokio::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use async_trait::async_trait;
 use super::{Queue, WorkUnit};
 
-struct Inner {
-    buf: Vec<Option<WorkUnit>>,
-    head: usize,
-    tail: usize,
-    count: usize,
-    capacity: usize,
-}
-
-impl Inner {
-    fn new(capacity: usize) -> Self {
-        assert!(capacity > 0, "Queue capacity must be > 0");
-
-        Self {
-            buf: vec![None; capacity],
-            head: 0,
-            tail: 0,
-            count: 0,
-            capacity,
-        }
-    }
-
-    fn is_full(&self) -> bool {
-        self.count == self.capacity
-    }
-
-    fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
-    fn push(&mut self, work: WorkUnit) {
-        self.buf[self.head] = Some(work);
-        self.head = (self.head + 1) % self.capacity;
-        self.count += 1;
-    }
-
-    fn pop(&mut self) -> WorkUnit {
-        let work = self.buf[self.tail].take().unwrap();
-        self.tail = (self.tail + 1) % self.capacity;
-        self.count -= 1;
-        work
-    }
-
-
-}
-
 pub struct InProcessQueue {
-    inner: Mutex<Inner>,
-    not_full: Condvar,
-    not_empty: Condvar,
+    tx: Sender<WorkUnit>,
+    rx: Mutex<Receiver<WorkUnit>>,
+    count: AtomicUsize,
 }
 
 impl InProcessQueue {
     pub fn new(capacity: usize) -> Arc<Self> {
+        let (tx, rx) = mpsc::channel(capacity);
         Arc::new(Self {
-            inner: Mutex::new(Inner::new(capacity)),
-            not_full: Condvar::new(),
-            not_empty: Condvar::new(),
+            tx,
+            rx: Mutex::new(rx),
+            count: AtomicUsize::new(0),
         })
     }
 }
 
+#[async_trait]
 impl Queue for InProcessQueue {
-    fn push(&self, work: WorkUnit) {
-        let mut inner = self.inner.lock().unwrap();
-
-        while inner.is_full() {
-            inner = self.not_full.wait(inner).unwrap();
-        }
-
-        inner.push(work);
-
-        self.not_empty.notify_one();
+    async fn push(&self, work: WorkUnit) {
+        self.count.fetch_add(1, Ordering::SeqCst);
+        let _ = self.tx.send(work).await;
     }
 
-    fn pop(&self) -> WorkUnit {
-        let mut inner = self.inner.lock().unwrap();
-
-        while inner.is_empty() {
-            inner = self.not_empty.wait(inner).unwrap();
+    async fn pop(&self) -> WorkUnit {
+        let mut rx = self.rx.lock().await;
+        if let Some(work) = rx.recv().await {
+            self.count.fetch_sub(1, Ordering::SeqCst);
+            work
+        } else {
+            WorkUnit::shutdown()
         }
-
-        let work = inner.pop();
-
-        self.not_full.notify_one();
-        work 
     }
 
     fn len(&self) -> usize {
-        self.inner.lock().unwrap().count
+        self.count.load(Ordering::SeqCst)
     }
 
     fn is_empty(&self) -> bool {
-        self.inner.lock().unwrap().is_empty()
+        self.len() == 0
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
     use std::time::Duration;
 
     fn work(url: &str) -> WorkUnit {
@@ -108,123 +58,121 @@ mod tests {
             url: url.to_string(),
             current_depth: 0,
             target_depth: 3,
-            parent_node: None,
+            parent_url: None,
             shutdown: false,
         }
     }
 
-    #[test]
-    fn push_then_pop_returns_same_item() {
+    #[tokio::test]
+    async fn push_then_pop_returns_same_item() {
         let q = InProcessQueue::new(4);
-        q.push(work("https://a.com"));
-        assert_eq!(q.pop().url, "https://a.com");
+        q.push(work("https://a.com")).await;
+        assert_eq!(q.pop().await.url, "https://a.com");
     }
 
-    #[test]
-    fn fifo_order_is_preserved() {
+    #[tokio::test]
+    async fn fifo_order_is_preserved() {
         let q = InProcessQueue::new(4);
-        q.push(work("https://a.com"));
-        q.push(work("https://b.com"));
-        q.push(work("https://c.com"));
-        assert_eq!(q.pop().url, "https://a.com");
-        assert_eq!(q.pop().url, "https://b.com");
-        assert_eq!(q.pop().url, "https://c.com");
+        q.push(work("https://a.com")).await;
+        q.push(work("https://b.com")).await;
+        q.push(work("https://c.com")).await;
+        assert_eq!(q.pop().await.url, "https://a.com");
+        assert_eq!(q.pop().await.url, "https://b.com");
+        assert_eq!(q.pop().await.url, "https://c.com");
     }
 
-    #[test]
-    fn len_tracks_count() {
+    #[tokio::test]
+    async fn len_tracks_count() {
         let q = InProcessQueue::new(4);
         assert_eq!(q.len(), 0);
-        q.push(work("https://a.com"));
-        q.push(work("https://b.com"));
+        q.push(work("https://a.com")).await;
+        q.push(work("https://b.com")).await;
         assert_eq!(q.len(), 2);
-        q.pop();
+        q.pop().await;
         assert_eq!(q.len(), 1);
     }
 
-    #[test]
-    fn ring_wraps_around_correctly() {
+    #[tokio::test]
+    async fn ring_wraps_around_correctly() {
         let q = InProcessQueue::new(3);
-        q.push(work("https://a.com"));
-        q.push(work("https://b.com"));
-        q.push(work("https://c.com"));
-        q.pop();
-        q.pop();
-        q.pop();
-        q.push(work("https://d.com"));
-        q.push(work("https://e.com"));
-        assert_eq!(q.pop().url, "https://d.com");
-        assert_eq!(q.pop().url, "https://e.com");
+        q.push(work("https://a.com")).await;
+        q.push(work("https://b.com")).await;
+        q.push(work("https://c.com")).await;
+        q.pop().await;
+        q.pop().await;
+        q.pop().await;
+        q.push(work("https://d.com")).await;
+        q.push(work("https://e.com")).await;
+        assert_eq!(q.pop().await.url, "https://d.com");
+        assert_eq!(q.pop().await.url, "https://e.com");
     }
 
-    #[test]
-    fn pop_blocks_until_item_pushed() {
+    #[tokio::test]
+    async fn pop_blocks_until_item_pushed() {
         let q = InProcessQueue::new(4);
         let q2 = Arc::clone(&q);
 
-        let popper = thread::spawn(move || q2.pop().url);
+        let popper = tokio::spawn(async move { q2.pop().await.url });
 
-        thread::sleep(Duration::from_millis(50));
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
-        q.push(work("https://woke.com"));
+        q.push(work("https://woke.com")).await;
 
-        let url = popper.join().unwrap();
+        let url = popper.await.unwrap();
         assert_eq!(url, "https://woke.com");
     }
 
-    #[test]
-    fn push_blocks_when_full_unblocks_on_pop() {
+    #[tokio::test]
+    async fn push_blocks_when_full_unblocks_on_pop() {
         let q = InProcessQueue::new(2);
-        q.push(work("https://a.com"));
-        q.push(work("https://b.com")); 
+        q.push(work("https://a.com")).await;
+        q.push(work("https://b.com")).await; 
 
         let q2 = Arc::clone(&q);
 
-        let pusher = thread::spawn(move || {
-            q2.push(work("https://c.com")); 
+        let pusher = tokio::spawn(async move {
+            q2.push(work("https://c.com")).await; 
         });
 
-        thread::sleep(Duration::from_millis(50));
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
-        q.pop(); 
-        pusher.join().unwrap();
+        q.pop().await; 
+        pusher.await.unwrap();
 
         assert_eq!(q.len(), 2);
     }
 
-    #[test]
-    fn concurrent_producers_consumers_no_items_lost() {
+    #[tokio::test]
+    async fn concurrent_producers_consumers_no_items_lost() {
         let q = InProcessQueue::new(64);
         let total = 1000usize;
 
-        // 4 producers push 250 items each
         let producers: Vec<_> = (0..4).map(|i| {
             let q2 = Arc::clone(&q);
-            thread::spawn(move || {
+            tokio::spawn(async move {
                 for j in 0..250 {
-                    q2.push(work(&format!("https://producer-{}-item-{}.com", i, j)));
+                    q2.push(work(&format!("https://producer-{}-item-{}.com", i, j))).await;
                 }
             })
         }).collect();
 
-        // 4 consumers pop 250 items each, collect URLs
         let results: Vec<_> = (0..4).map(|_| {
             let q2 = Arc::clone(&q);
-            thread::spawn(move || {
+            tokio::spawn(async move {
                 let mut urls = Vec::new();
                 for _ in 0..250 {
-                    urls.push(q2.pop().url);
+                    urls.push(q2.pop().await.url);
                 }
                 urls
             })
         }).collect();
 
-        for p in producers { p.join().unwrap(); }
+        for p in producers { p.await.unwrap(); }
 
-        let all_urls: Vec<String> = results
-            .into_iter()
-            .flat_map(|r| r.join().unwrap())
-            .collect();
+        let mut all_urls = Vec::new();
+        for r in results {
+            all_urls.extend(r.await.unwrap());
+        }
 
         assert_eq!(all_urls.len(), total);
         assert_eq!(q.len(), 0);

@@ -1,6 +1,23 @@
 use std::time::Duration;
+use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OutputMode {
+    /// keep results in memory
+    Crawl,
+    /// write to disk
+    Clone,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OutputPathMode {
+    Relative,
+    Original,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutputFormat {
     Html,
     Markdown,
@@ -20,6 +37,15 @@ pub struct CrawlConfig {
 
     pub output_format: OutputFormat,
 
+    pub output_mode: OutputMode,
+    pub output_dir: Option<PathBuf>,
+    pub output_path_mode: OutputPathMode,
+    /// If true (recommended for clone), rewrite internal links to point to local mirrored files.
+    pub rewrite_links: bool,
+    /// If true, keep original extensions in file paths (e.g. keep `.html`), instead of rewriting
+    /// to `.md` when output is Markdown.
+    pub keep_extension: bool,
+
     pub respect_robots_txt: bool,
     pub crawl_delay: Option<Duration>,
     pub user_agent: String,
@@ -36,6 +62,11 @@ impl CrawlConfig {
             allowed_domains: vec![],
             blocked_paths: vec![],
             output_format: OutputFormat::Markdown,
+            output_mode: OutputMode::Crawl,
+            output_dir: None,
+            output_path_mode: OutputPathMode::Relative,
+            rewrite_links: true,
+            keep_extension: false,
             respect_robots_txt: false,
             crawl_delay: None,
             user_agent: "crawlyx-rs/0.1".to_string(),

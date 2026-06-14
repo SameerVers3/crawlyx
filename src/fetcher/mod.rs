@@ -1,5 +1,5 @@
 use std::time::Duration;
-use reqwest::blocking::Client;
+use reqwest::Client;
 
 #[derive(Debug)]
 pub enum FetchError {
@@ -18,6 +18,8 @@ impl std::fmt::Display for FetchError {
     }
 }
 
+impl std::error::Error for FetchError {}
+
 impl From<reqwest::Error> for FetchError {
     fn from(e: reqwest::Error) -> Self {
         if e.is_timeout() {
@@ -33,11 +35,13 @@ pub struct Fetcher {
 }
 
 impl Fetcher {
-    pub fn new() -> Self {
+    pub fn new(user_agent: &str) -> Self {
         let client = Client::builder()
-            .timeout(Duration::from_secs(10)) // will add this in config
-            .user_agent("Crawlyx/1.0")
+            .timeout(Duration::from_secs(10))
+            .user_agent(user_agent.to_string())
             .redirect(reqwest::redirect::Policy::limited(10))
+            .pool_max_idle_per_host(100)
+            .pool_idle_timeout(Duration::from_secs(90))
             .build()
             .expect("failed to build HTTP client");
     
@@ -46,55 +50,56 @@ impl Fetcher {
         }
     }
 
-    pub fn fetch(&self, url: &str) -> Result<String, FetchError> {
-        let response = self.client.get(url).send()?;
+    pub async fn fetch(&self, url: &str) -> Result<(String, u16), FetchError> {
+        let response = self.client.get(url).send().await?;
 
         let status = response.status();
+        let status_code = status.as_u16();
         if !status.is_success() {
-            return Err(FetchError::BadStatus(status.as_u16()));
+            return Err(FetchError::BadStatus(status_code));
         }
 
-        let body = response.text()?;
+        let body = response.text().await?;
 
-        Ok(body)
+        Ok((body, status_code))
     }
-    
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn fetch_real_page_returns_html() {
-        let fetcher = Fetcher::new();
-        let result = fetcher.fetch("https://example.com");
+    #[tokio::test]
+    async fn fetch_real_page_returns_html() {
+        let fetcher = Fetcher::new("Crawlyx/1.0");
+        let result = fetcher.fetch("https://example.com").await;
+        if let Err(ref e) = result {
+            eprintln!("FETCH ERROR: {:?}", e);
+        }
         assert!(result.is_ok());
-        let body = result.unwrap();
-        assert!(body.contains("<html"));
+        let (body, status) = result.unwrap();
+        assert_eq!(status, 200);
+        assert!(body.contains("<html") || body.contains("<HTML"));
     }
 
-    #[test]
-    fn fetch_bad_status_returns_error() {
-        let fetcher = Fetcher::new();
-        // httpbin.org/status/{code} returns the requested status code
-        let result = fetcher.fetch("https://httpbin.org/status/404");
-        assert!(matches!(result, Err(FetchError::BadStatus(_))));
+    #[tokio::test]
+    async fn fetch_bad_status_returns_error() {
+        let fetcher = Fetcher::new("Crawlyx/1.0");
+        let result = fetcher.fetch("https://httpbin.org/status/404").await;
+        assert!(matches!(result, Err(FetchError::BadStatus(404))));
     }
 
-    #[test]
-    fn fetch_follows_redirects() {
-        let fetcher = Fetcher::new();
-        // httpbin.org/redirect/{n} redirects n times then returns 200 OK
-        let result = fetcher.fetch("https://httpbin.org/redirect/2");
+    #[tokio::test]
+    async fn fetch_follows_redirects() {
+        let fetcher = Fetcher::new("Crawlyx/1.0");
+        let result = fetcher.fetch("https://httpbin.org/redirect/2").await;
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn fetch_invalid_url_returns_network_error() {
-        let fetcher = Fetcher::new();
-        let result = fetcher.fetch("https://this-domain-does-not-exist-xyz.com");
+    #[tokio::test]
+    async fn fetch_invalid_url_returns_network_error() {
+        let fetcher = Fetcher::new("Crawlyx/1.0");
+        let result = fetcher.fetch("https://this-domain-does-not-exist-xyz.com").await;
         assert!(matches!(result, Err(FetchError::Network(_)) | Err(FetchError::Timeout)));
     }
 }

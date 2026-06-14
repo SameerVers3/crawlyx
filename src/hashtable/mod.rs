@@ -4,7 +4,16 @@ use crossbeam_utils::CachePadded;
 use std::sync::Arc;
 pub mod utils;
 use std::collections::hash_map::Entry;
-use utils::{shard_for, NUM_SHARDS, SHARD_MASK};
+use utils::{shard_for, NUM_SHARDS};
+use async_trait::async_trait;
+use crate::storage::RedisClient;
+
+#[async_trait]
+pub trait VisitedStore: Send + Sync {
+    async fn insert(&self, url: &str) -> bool;
+    async fn mark_visited(&self, url: &str);
+    async fn is_visited(&self, url: &str) -> bool;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UrlState {
@@ -58,10 +67,68 @@ impl VisitedTable {
     }
 }
 
+#[async_trait]
+impl VisitedStore for VisitedTable {
+    async fn insert(&self, url: &str) -> bool {
+        self.insert(url)
+    }
+
+    async fn mark_visited(&self, url: &str) {
+        self.mark_visited(url);
+    }
+
+    async fn is_visited(&self, url: &str) -> bool {
+        self.is_visited(url)
+    }
+}
+
+pub struct RedisVisitedTable {
+    client: RedisClient,
+    key: String,
+}
+
+impl RedisVisitedTable {
+    pub fn new(client: RedisClient, key: String) -> Self {
+        Self { client, key }
+    }
+}
+
+#[async_trait]
+impl VisitedStore for RedisVisitedTable {
+    async fn insert(&self, url: &str) -> bool {
+        let cmd = vec!["SADD".to_string(), self.key.clone(), url.to_string()];
+        match self.client.run_command(&cmd).await {
+            Ok(val) => {
+                val.as_i64() == Some(1) || val.as_bool() == Some(true)
+            }
+            Err(e) => {
+                eprintln!("RedisVisitedTable insert error: {}", e);
+                false
+            }
+        }
+    }
+
+    async fn mark_visited(&self, _url: &str) {
+        // No-op for Redis since `insert` already added the URL to the visited set
+    }
+
+    async fn is_visited(&self, url: &str) -> bool {
+        let cmd = vec!["SISMEMBER".to_string(), self.key.clone(), url.to_string()];
+        match self.client.run_command(&cmd).await {
+            Ok(val) => {
+                val.as_i64() == Some(1) || val.as_bool() == Some(true)
+            }
+            Err(_) => false,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::HttpRedisClient;
+    use tokio::net::TcpListener;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     //Basic insert & lookup
 
@@ -122,7 +189,6 @@ mod tests {
 
     #[test]
     fn shard_index_always_in_bounds() {
-        // generate 10,000 fake URLs and verify every shard index is in [0, NUM_SHARDS)
         for i in 0..10_000u64 {
             let url = format!("http://site.com/{}", i);
             let idx = shard_for(&url);
@@ -132,9 +198,9 @@ mod tests {
 
     #[test]
     fn bitmask_equals_modulo() {
-        // hash & (N-1) must equal hash % N for all inputs when N is power of 2
         use std::hash::{Hash, Hasher};
         use ahash::AHasher;
+        use crate::hashtable::utils::SHARD_MASK;
         for i in 0..10_000u64 {
             let url = format!("http://site.com/{}", i);
             let mut hasher = AHasher::default();
@@ -167,9 +233,7 @@ mod tests {
         let table = VisitedTable::new();
         table.insert("http://site.com");
         table.mark_visited("http://site.com");
-        // insert returns false — already in table
         assert!(!table.insert("http://site.com"));
-        // state stays Visited, not overwritten to InFlight
         assert!(matches!(table.get("http://site.com"), Some(UrlState::Visited)));
     }
 
@@ -191,13 +255,46 @@ mod tests {
         let table = Arc::new(VisitedTable::new());
         let t = table.clone();
 
-        // spawn a thread that panics while holding nothing
-        // (actually poisoning requires panic INSIDE a write lock — simulate it)
         let result = std::panic::catch_unwind(|| {
             t.insert("http://site.com");
         });
-        // the table should still work after a panic outside the lock
         assert!(result.is_ok());
         assert!(table.get("http://site.com").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_redis_visited_table_integration() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_handle = tokio::spawn(async move {
+            // SADD insert (return 1 => true)
+            {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = [0; 1024];
+                let n = socket.read(&mut buf).await.unwrap();
+                let req_str = std::str::from_utf8(&buf[..n]).unwrap();
+                assert!(req_str.contains(r#"[["SADD","visited","https://url1.com"]]"#));
+                let resp = "HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n[{\"result\":1}]\n";
+                socket.write_all(resp.as_bytes()).await.unwrap();
+            }
+            // SISMEMBER check (return 1 => true)
+            {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = [0; 1024];
+                let n = socket.read(&mut buf).await.unwrap();
+                let req_str = std::str::from_utf8(&buf[..n]).unwrap();
+                assert!(req_str.contains(r#"[["SISMEMBER","visited","https://url1.com"]]"#));
+                let resp = "HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n[{\"result\":1}]\n";
+                socket.write_all(resp.as_bytes()).await.unwrap();
+            }
+        });
+
+        let client = RedisClient::Http(Arc::new(HttpRedisClient::new(format!("http://{}", addr), "t".to_string())));
+        let store = RedisVisitedTable::new(client, "visited".to_string());
+
+        assert!(store.insert("https://url1.com").await);
+        assert!(store.is_visited("https://url1.com").await);
+        server_handle.await.unwrap();
     }
 }

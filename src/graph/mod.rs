@@ -22,7 +22,6 @@ pub struct NodeData {
 #[derive(Debug)]
 pub struct Graph {
     nodes: RwLock<HashMap<String, Arc<Mutex<NodeData>>>>,
-    root: Option<Arc<Mutex<NodeData>>>,
 }
 
 pub type Node = Arc<Mutex<NodeData>>;
@@ -66,7 +65,6 @@ impl Graph {
 
         Self {
             nodes: RwLock::new(map),
-            root: Some(root_node),
         }
     }
 
@@ -104,6 +102,10 @@ impl Graph {
     pub fn set_content(&self, node: &Node, content: String) {
         node.lock().unwrap().data = Some(content);
     }
+
+    pub fn size(&self) -> usize {
+        self.nodes.read().unwrap().len()
+    }
 }
 
 
@@ -136,7 +138,7 @@ mod tests {
     #[test]
     fn graph_new_has_root() {
         let g = Graph::new("https://root.com".to_string());
-        let root = g.root.as_ref().unwrap();
+        let root = g.get_node("https://root.com").unwrap();
         assert_eq!(root.lock().unwrap().url, "https://root.com");
         assert_eq!(root.lock().unwrap().depth, 0);
     }
