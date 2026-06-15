@@ -6,7 +6,6 @@ pub mod utils;
 use std::collections::hash_map::Entry;
 use utils::{shard_for, NUM_SHARDS};
 use async_trait::async_trait;
-use crate::storage::RedisClient;
 
 #[async_trait]
 pub trait VisitedStore: Send + Sync {
@@ -82,53 +81,10 @@ impl VisitedStore for VisitedTable {
     }
 }
 
-pub struct RedisVisitedTable {
-    client: RedisClient,
-    key: String,
-}
-
-impl RedisVisitedTable {
-    pub fn new(client: RedisClient, key: String) -> Self {
-        Self { client, key }
-    }
-}
-
-#[async_trait]
-impl VisitedStore for RedisVisitedTable {
-    async fn insert(&self, url: &str) -> bool {
-        let cmd = vec!["SADD".to_string(), self.key.clone(), url.to_string()];
-        match self.client.run_command(&cmd).await {
-            Ok(val) => {
-                val.as_i64() == Some(1) || val.as_bool() == Some(true)
-            }
-            Err(e) => {
-                eprintln!("RedisVisitedTable insert error: {}", e);
-                false
-            }
-        }
-    }
-
-    async fn mark_visited(&self, _url: &str) {
-        // No-op for Redis since `insert` already added the URL to the visited set
-    }
-
-    async fn is_visited(&self, url: &str) -> bool {
-        let cmd = vec!["SISMEMBER".to_string(), self.key.clone(), url.to_string()];
-        match self.client.run_command(&cmd).await {
-            Ok(val) => {
-                val.as_i64() == Some(1) || val.as_bool() == Some(true)
-            }
-            Err(_) => false,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::HttpRedisClient;
-    use tokio::net::TcpListener;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     //Basic insert & lookup
 
@@ -262,39 +218,4 @@ mod tests {
         assert!(table.get("http://site.com").is_some());
     }
 
-    #[tokio::test]
-    async fn test_redis_visited_table_integration() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let server_handle = tokio::spawn(async move {
-            // SADD insert (return 1 => true)
-            {
-                let (mut socket, _) = listener.accept().await.unwrap();
-                let mut buf = [0; 1024];
-                let n = socket.read(&mut buf).await.unwrap();
-                let req_str = std::str::from_utf8(&buf[..n]).unwrap();
-                assert!(req_str.contains(r#"[["SADD","visited","https://url1.com"]]"#));
-                let resp = "HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n[{\"result\":1}]\n";
-                socket.write_all(resp.as_bytes()).await.unwrap();
-            }
-            // SISMEMBER check (return 1 => true)
-            {
-                let (mut socket, _) = listener.accept().await.unwrap();
-                let mut buf = [0; 1024];
-                let n = socket.read(&mut buf).await.unwrap();
-                let req_str = std::str::from_utf8(&buf[..n]).unwrap();
-                assert!(req_str.contains(r#"[["SISMEMBER","visited","https://url1.com"]]"#));
-                let resp = "HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n[{\"result\":1}]\n";
-                socket.write_all(resp.as_bytes()).await.unwrap();
-            }
-        });
-
-        let client = RedisClient::Http(Arc::new(HttpRedisClient::new(format!("http://{}", addr), "t".to_string())));
-        let store = RedisVisitedTable::new(client, "visited".to_string());
-
-        assert!(store.insert("https://url1.com").await);
-        assert!(store.is_visited("https://url1.com").await);
-        server_handle.await.unwrap();
-    }
 }

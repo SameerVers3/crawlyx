@@ -35,15 +35,20 @@ pub struct Fetcher {
 }
 
 impl Fetcher {
-    pub fn new(user_agent: &str) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(10))
+    pub fn new(user_agent: &str, timeout: Option<Duration>) -> Self {
+        let mut builder = Client::builder()
             .user_agent(user_agent.to_string())
             .redirect(reqwest::redirect::Policy::limited(10))
             .pool_max_idle_per_host(100)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .build()
-            .expect("failed to build HTTP client");
+            .pool_idle_timeout(Duration::from_secs(90));
+
+        if let Some(t) = timeout {
+            builder = builder.timeout(t);
+        } else {
+            builder = builder.timeout(Duration::from_secs(10));
+        }
+
+        let client = builder.build().expect("failed to build HTTP client");
     
         Self {
             client
@@ -68,15 +73,24 @@ impl Fetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]
     async fn fetch_real_page_returns_html() {
-        let fetcher = Fetcher::new("Crawlyx/1.0");
-        let result = fetcher.fetch("https://example.com").await;
-        if let Err(ref e) = result {
-            eprintln!("FETCH ERROR: {:?}", e);
-        }
-        assert!(result.is_ok());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0; 1024];
+            let _ = socket.read(&mut buf).await;
+            let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 37\r\n\r\n<html><body>Hello World</body></html>";
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let fetcher = Fetcher::new("Crawlyx/1.0", None);
+        let result = fetcher.fetch(&format!("http://{}", addr)).await;
+        assert!(result.is_ok(), "fetch failed: {:?}", result.err());
         let (body, status) = result.unwrap();
         assert_eq!(status, 200);
         assert!(body.contains("<html") || body.contains("<HTML"));
@@ -84,21 +98,56 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_bad_status_returns_error() {
-        let fetcher = Fetcher::new("Crawlyx/1.0");
-        let result = fetcher.fetch("https://httpbin.org/status/404").await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0; 1024];
+            let _ = socket.read(&mut buf).await;
+            let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let fetcher = Fetcher::new("Crawlyx/1.0", None);
+        let result = fetcher.fetch(&format!("http://{}", addr)).await;
         assert!(matches!(result, Err(FetchError::BadStatus(404))));
     }
 
     #[tokio::test]
     async fn fetch_follows_redirects() {
-        let fetcher = Fetcher::new("Crawlyx/1.0");
-        let result = fetcher.fetch("https://httpbin.org/redirect/2").await;
-        assert!(result.is_ok());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let addr_str = addr.to_string();
+        
+        tokio::spawn(async move {
+            // first request: redirect
+            {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = [0; 1024];
+                let _ = socket.read(&mut buf).await;
+                let response = format!("HTTP/1.1 302 Found\r\nLocation: http://{}/target\r\nContent-Length: 0\r\n\r\n", addr_str);
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+
+            // second request: ok
+            {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = [0; 1024];
+                let _ = socket.read(&mut buf).await;
+                let response = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+
+        let fetcher = Fetcher::new("Crawlyx/1.0", None);
+        let result = fetcher.fetch(&format!("http://{}", addr)).await;
+        assert!(result.is_ok(), "redirect fetch failed: {:?}", result.err());
     }
 
     #[tokio::test]
     async fn fetch_invalid_url_returns_network_error() {
-        let fetcher = Fetcher::new("Crawlyx/1.0");
+        let fetcher = Fetcher::new("Crawlyx/1.0", None);
         let result = fetcher.fetch("https://this-domain-does-not-exist-xyz.com").await;
         assert!(matches!(result, Err(FetchError::Network(_)) | Err(FetchError::Timeout)));
     }

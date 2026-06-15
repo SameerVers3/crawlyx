@@ -392,3 +392,27 @@ mod tests {
         assert!(wrote.contains("src=\"img/logo.png\""));
     }
 }
+
+pub fn format_json(tree: &crate::tree::TreeNode) -> String {
+    serde_json::to_string_pretty(tree).unwrap_or_default()
+}
+
+pub fn format_markdown(graph: &crate::graph::Graph, tree: &crate::tree::TreeNode) -> String {
+    let mut out = String::new();
+    walk_and_format_markdown(graph, tree, &mut out);
+    out
+}
+
+fn walk_and_format_markdown(graph: &crate::graph::Graph, node: &crate::tree::TreeNode, out: &mut String) {
+    if let Some(graph_node) = graph.get_node(&node.url) {
+        let lock = graph_node.lock().unwrap();
+        if let Some(ref markdown_content) = lock.data {
+            out.push_str(&format!("# Page: {}\n\n", node.url));
+            out.push_str(markdown_content);
+            out.push_str("\n\n---\n\n");
+        }
+    }
+    for child in &node.children {
+        walk_and_format_markdown(graph, child, out);
+    }
+}

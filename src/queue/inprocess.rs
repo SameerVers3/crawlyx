@@ -31,12 +31,9 @@ impl Queue for InProcessQueue {
 
     async fn pop(&self) -> WorkUnit {
         let mut rx = self.rx.lock().await;
-        if let Some(work) = rx.recv().await {
-            self.count.fetch_sub(1, Ordering::SeqCst);
-            work
-        } else {
-            WorkUnit::shutdown()
-        }
+        let work = rx.recv().await.expect("Queue channel closed unexpectedly");
+        self.count.fetch_sub(1, Ordering::SeqCst);
+        work
     }
 
     fn len(&self) -> usize {
@@ -55,11 +52,9 @@ mod tests {
 
     fn work(url: &str) -> WorkUnit {
         WorkUnit {
-            url: url.to_string(),
-            current_depth: 0,
-            target_depth: 3,
-            parent_url: None,
-            shutdown: false,
+            url: url::Url::parse(url).unwrap(),
+            depth: 0,
+            parent_node_id: None,
         }
     }
 
@@ -67,7 +62,7 @@ mod tests {
     async fn push_then_pop_returns_same_item() {
         let q = InProcessQueue::new(4);
         q.push(work("https://a.com")).await;
-        assert_eq!(q.pop().await.url, "https://a.com");
+        assert_eq!(q.pop().await.url.as_str(), "https://a.com/");
     }
 
     #[tokio::test]
@@ -76,9 +71,9 @@ mod tests {
         q.push(work("https://a.com")).await;
         q.push(work("https://b.com")).await;
         q.push(work("https://c.com")).await;
-        assert_eq!(q.pop().await.url, "https://a.com");
-        assert_eq!(q.pop().await.url, "https://b.com");
-        assert_eq!(q.pop().await.url, "https://c.com");
+        assert_eq!(q.pop().await.url.as_str(), "https://a.com/");
+        assert_eq!(q.pop().await.url.as_str(), "https://b.com/");
+        assert_eq!(q.pop().await.url.as_str(), "https://c.com/");
     }
 
     #[tokio::test]
@@ -103,8 +98,8 @@ mod tests {
         q.pop().await;
         q.push(work("https://d.com")).await;
         q.push(work("https://e.com")).await;
-        assert_eq!(q.pop().await.url, "https://d.com");
-        assert_eq!(q.pop().await.url, "https://e.com");
+        assert_eq!(q.pop().await.url.as_str(), "https://d.com/");
+        assert_eq!(q.pop().await.url.as_str(), "https://e.com/");
     }
 
     #[tokio::test]
@@ -112,14 +107,14 @@ mod tests {
         let q = InProcessQueue::new(4);
         let q2 = Arc::clone(&q);
 
-        let popper = tokio::spawn(async move { q2.pop().await.url });
+        let popper = tokio::spawn(async move { q2.pop().await.url.to_string() });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         q.push(work("https://woke.com")).await;
 
         let url = popper.await.unwrap();
-        assert_eq!(url, "https://woke.com");
+        assert_eq!(url, "https://woke.com/");
     }
 
     #[tokio::test]
@@ -161,7 +156,7 @@ mod tests {
             tokio::spawn(async move {
                 let mut urls = Vec::new();
                 for _ in 0..250 {
-                    urls.push(q2.pop().await.url);
+                    urls.push(q2.pop().await.url.to_string());
                 }
                 urls
             })

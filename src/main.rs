@@ -1,46 +1,24 @@
-
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
+use url::Url;
 
 use crawlyx_rs::{
-    config::{CrawlConfig, OutputFormat, OutputMode, OutputPathMode},
-    graph::Graph,
+    state::CrawlState,
+    work::WorkUnit,
     hashtable::VisitedTable,
     queue::inprocess::InProcessQueue,
-    scheduler::Scheduler,
+    queue::Queue,
+    graph::Graph,
+    fetcher::Fetcher,
 };
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormatArg {
-    Html,
+    Json,
     Markdown,
-}
-
-impl From<OutputFormatArg> for OutputFormat {
-    fn from(value: OutputFormatArg) -> Self {
-        match value {
-            OutputFormatArg::Html => OutputFormat::Html,
-            OutputFormatArg::Markdown => OutputFormat::Markdown,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum OutputPathModeArg {
-    Relative,
-    Original,
-}
-
-impl From<OutputPathModeArg> for OutputPathMode {
-    fn from(value: OutputPathModeArg) -> Self {
-        match value {
-            OutputPathModeArg::Relative => OutputPathMode::Relative,
-            OutputPathModeArg::Original => OutputPathMode::Original,
-        }
-    }
 }
 
 #[derive(Debug, Parser)]
@@ -58,62 +36,26 @@ struct CrawlArgs {
     depth: usize,
 
     /// Stop after visiting N pages
-    #[arg(long)]
-    max_pages: Option<usize>,
+    #[arg(long, short = 'l')]
+    page_limit: Option<usize>,
 
-    /// Output format to store in the graph node content (Html or Markdown)
+    /// Output format (json or markdown)
     #[arg(long, value_enum, default_value_t = OutputFormatArg::Markdown)]
     format: OutputFormatArg,
 
-    /// Only crawl URLs on the same domain as the seed
-    #[arg(long, default_value_t = true)]
-    same_domain: bool,
+    /// Timeout in seconds for individual HTTP requests
+    #[arg(long, default_value_t = 10)]
+    timeout: u64,
 
-    /// Allow subdomains when same-domain is enabled
-    #[arg(long, default_value_t = false)]
-    allow_subdomains: bool,
-
-    /// Respect robots.txt (todo)
-    #[arg(long, default_value_t = false)]
-    respect_robots: bool,
-
-    /// Crawl delay in milliseconds (todo)
+    /// Total crawl timeout in seconds
     #[arg(long)]
-    crawl_delay_ms: Option<u64>,
-
-    /// User agent string to send in requests (todo)
-    #[arg(long, default_value = "crawlyx-rs/0.1")]
-    user_agent: String,
-}
-
-#[derive(Debug, Parser)]
-struct CloneArgs {
-    #[command(flatten)]
-    crawl: CrawlArgs,
-
-    /// Output directory for the cloned site
-    #[arg(long, short = 'o')]
-    output: PathBuf,
-
-    /// How URLs map to local paths
-    #[arg(long, value_enum, default_value_t = OutputPathModeArg::Relative)]
-    path_mode: OutputPathModeArg,
-
-    /// Rewrite internal links to local mirrored file paths (recommended for offline browsing)
-    #[arg(long, default_value_t = true)]
-    rewrite_links: bool,
-
-    /// Keep original extensions in output paths (e.g. keep `.html`), even when output is Markdown.
-    #[arg(long, default_value_t = false)]
-    keep_extension: bool,
+    crawl_timeout: Option<u64>,
 }
 
 #[derive(Debug, clap::Subcommand)]
 enum Command {
     /// Crawl a site in memory
     Crawl(CrawlArgs),
-    /// Crawl and mirror pages locally 
-    Clone(CloneArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -125,63 +67,94 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
-    //console_subscriber::init();
     let cli = Cli::parse();
 
-    let start = Instant::now();
+    let crawl = match cli.command {
+        Command::Crawl(args) => args,
+    };
 
-    let (crawl, mut config) = match cli.command {
-        Command::Crawl(args) => {
-            let mut cfg = CrawlConfig::new(args.url.clone());
-            cfg.output_mode = OutputMode::Crawl;
-            (args, cfg)
-        }
-        Command::Clone(args) => {
-            let mut cfg = CrawlConfig::new(args.crawl.url.clone());
-            cfg.output_mode = OutputMode::Clone;
-            cfg.output_dir = Some(args.output);
-            cfg.output_path_mode = args.path_mode.into();
-            cfg.rewrite_links = args.rewrite_links;
-            cfg.keep_extension = args.keep_extension;
-            (args.crawl, cfg)
+    let start_url = match Url::parse(&crawl.url) {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!("Invalid seed URL '{}': {}", crawl.url, e);
+            std::process::exit(1);
         }
     };
 
-    config.max_depth = crawl.depth;
-    config.max_pages = crawl.max_pages;
-    config.same_domain_only = crawl.same_domain;
-    config.allow_subdomains = crawl.allow_subdomains;
-    config.output_format = crawl.format.into();
-    config.respect_robots_txt = crawl.respect_robots;
-    config.crawl_delay = crawl.crawl_delay_ms.map(Duration::from_millis);
-    config.user_agent = crawl.user_agent;
+    let visited = Arc::new(VisitedTable::new());
+    let queue = InProcessQueue::new(2048);
+    let graph = Arc::new(Graph::new(crawl.url.clone()));
+    
+    let fetcher = Arc::new(Fetcher::new(
+        "crawlyx-rs/0.1",
+        Some(Duration::from_secs(crawl.timeout)),
+    ));
 
-    let config = Arc::new(config);
+    let state = Arc::new(CrawlState {
+        visited: Arc::clone(&visited),
+        queue: Arc::clone(&queue),
+        graph: Arc::clone(&graph),
+        fetcher,
+        pages_crawled: AtomicUsize::new(0),
+        in_flight: AtomicUsize::new(0),
+        page_limit: crawl.page_limit.unwrap_or(usize::MAX),
+        max_depth: crawl.depth,
+        shutdown: AtomicBool::new(false),
+        notify: Arc::new(tokio::sync::Notify::new()),
+    });
 
-    // Bootstrap storage backends based on environment variables
-    let redis_client = crawlyx_rs::storage::create_redis_client();
+    // Push the seed WorkUnit onto the queue and mark it in visited
+    let start_url_str = start_url.to_string();
+    visited.insert(&start_url_str); // mark in visited hashmap
 
-    let (queue, hashtable): (
-        Arc<dyn crawlyx_rs::queue::Queue>,
-        Arc<dyn crawlyx_rs::hashtable::VisitedStore>,
-    ) = if let Some(client) = redis_client {
-        println!("Redis/Upstash storage detected. Bootstrapping distributed backends.");
-        let q = Arc::new(crawlyx_rs::queue::redis_queue::RedisQueue::new(client.clone(), "crawlyx_queue".to_string()));
-        let h = Arc::new(crawlyx_rs::hashtable::RedisVisitedTable::new(client, "crawlyx_visited".to_string()));
-        (q, h)
+    queue.push(WorkUnit {
+        url: start_url.clone(),
+        depth: 0,
+        parent_node_id: None,
+    }).await;
+
+    // Listen for Ctrl+C in a separate task
+    let state_clone = Arc::clone(&state);
+    tokio::spawn(async move {
+        if let Ok(_) = tokio::signal::ctrl_c().await {
+            eprintln!("\nCtrl+C received. Gracefully shutting down... Waiting for in-flight tasks to finish.");
+            state_clone.shutdown.store(true, Ordering::SeqCst);
+        }
+    });
+
+    // Run the dispatcher with optional crawl timeout
+    let dispatcher_future = crawlyx_rs::dispatcher::run_dispatcher(Arc::clone(&state), crawl.workers);
+    
+    let start_time = Instant::now();
+    if let Some(t_limit) = crawl.crawl_timeout {
+        match tokio::time::timeout(Duration::from_secs(t_limit), dispatcher_future).await {
+            Ok(_) => {}
+            Err(_) => {
+                eprintln!("\nCrawl timeout of {} seconds reached. Shutting down... Waiting for in-flight tasks to finish.", t_limit);
+                state.shutdown.store(true, Ordering::SeqCst);
+                // Wait for any remaining in-flight tasks
+                while state.in_flight.load(Ordering::SeqCst) > 0 {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
     } else {
-        println!("No Redis environment variables set. Running in-memory crawler.");
-        let q = InProcessQueue::new(512);
-        let h = Arc::new(VisitedTable::new());
-        (q, h)
-    };
+        dispatcher_future.await;
+    }
 
-    let graph = Arc::new(Graph::new(config.start_url.clone()));
+    let duration = start_time.elapsed();
 
-    let scheduler = Scheduler::new(queue, hashtable, graph, crawl.workers, crawl.depth, config);
-    scheduler.run(crawl.url).await;
+    // Derive tree from graph
+    if let Some(tree) = crawlyx_rs::tree::derive_tree(&graph, &start_url_str) {
+        // Format and print output
+        let output = match crawl.format {
+            OutputFormatArg::Json => crawlyx_rs::output::format_json(&tree),
+            OutputFormatArg::Markdown => crawlyx_rs::output::format_markdown(&graph, &tree),
+        };
+        println!("{}", output);
+    } else {
+        eprintln!("Failed to derive crawl tree.");
+    }
 
-    let duration = start.elapsed();
-    println!("Time elapsed: {} ms", duration.as_millis());
+    eprintln!("Time elapsed: {} ms", duration.as_millis());
 }
-
