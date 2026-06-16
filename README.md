@@ -1,68 +1,161 @@
-# Crawlyx
+<p align="center">
+  <a href="https://ibb.co/FbJX1qZP"><img src="https://i.ibb.co/rGM3hf8W/snorlax-no-bg.png" alt="snorlax-no-bg" border="0" width="200" /></a>
+</p>
 
-A fast, multi-threaded web crawler.
+<p align="center">
+  <strong>Crawlyx: blazing fast web crawler</strong>
+</p>
 
-## CLI usage
+<p align="center">
+  <em>Because LLMs deserve clean Markdown, not web junk.</em>
+</p>
 
-The binary is named `crawlyx`.
+<p align="center">
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.75+-93450a.svg?style=flat-square&logo=rust" alt="Rust"/></a>
+</p>
 
-Example:
+<br/>
+
+---
+
+## Features
+
+- **Concurrent Async Engine:** Driven by `tokio` and `reqwest` with tuned Keep-Alive connection pooling for high-throughput I/O.
+- **Boilerplate-free Extraction:** Integrates Mozilla's Readability algorithm to instantly strip sidebars, navbars, and headers.
+- **LLM-Ready Markdown:** Converts cleaned HTML to clean Markdown with metadata parsing (title, author, description, date).
+- **Reactive Event Loop:** An event-driven dispatcher using `tokio::sync::Notify` that sleeps silently and wakes up instantly without busy-polling.
+- **Off-Thread CPU Work:** Offloads CPU-intensive HTML parsing and Markdown rendering to a `spawn_blocking` pool to keep networking lanes unblocked.
+- **Deadlock-Free Graph:** Tracks relationships in a thread-safe Graph structure using lock ordering to guarantee zero deadlocks.
+
+---
+
+## Demo
 
 ```bash
-cargo run --release -- --url https://example.com --depth 2 --workers 32 --format markdown
+# Crawl 50 pages of the Rust Book and output clean Markdown trees in 3.5 seconds
+
+cargo run --release -- crawl -u "https://doc.rust-lang.org/stable/book/" -l 50 -d 3
 ```
 
-See all options:
+<details>
+<summary>Example Output Snippet</summary>
+
+```markdown
+# Page: https://doc.rust-lang.org/stable/book/
+
+This is the online version of "The Rust Programming Language" book...
+
+---
+
+# Page: https://doc.rust-lang.org/stable/book/ch01-00-getting-started.html
+
+Getting started with Rust involves installing the toolchain and writing a hello world...
+
+---
+```
+</details>
+
+---
+
+## Installation
+
+### Prerequisites
+
+> **Note:** Make sure you have [Rust](https://rustup.rs/) installed (1.75+)
+
+### Build from Source
 
 ```bash
-cargo run -- --help
+# Clone the repository
+git clone https://github.com/SameerVers3/crawlyx-rs.git
+cd crawlyx-rs
+
+# Build optimized release binary
+cargo build --release
+
+# Run
+./target/release/crawlyx_rs --help
 ```
 
-## Implementation Status
+---
 
-### Queue
-- [x] In-process circular queue
-- [x] Waiting list for when queue is full
-- [ ] Redis queue option (multi-machine)
+## Usage
 
-### Dispatcher / Scheduler
-- [ ] Single dispatcher thread
-- [ ] Check pool for available slot before scheduling
-- [ ] Check hashtable before scheduling (deduplication)
-- [ ] Mark URL as in-flight at dispatch time
+### Crawl a Site and Format as Markdown (Default)
 
-### Thread Pool
-- [ ] Worker pool
-- [ ] Unit of work: (url, current_depth, target_depth, parent_node_reference)
+```bash
+cargo run --release -- crawl -u "https://example.com" -d 2
+```
 
-### Visited Page Hashtable
-- [x] Sharded RwLock
-- [x] Power of 2 shards with bitmasking for bucket lookup
-- [x] Fast non-cryptographic hash function (FxHash or AHash) [used AHash]
+### Crawl and Output as JSON
 
-### URL Normalization
-- [x] Lowercase scheme and host
-- [x] Resolve relative URLs against base URL of the page
-- [x] Remove default ports
-- [x] Remove fragments
-- [x] Sort query parameters
-- [x] Trailing slash consistency
+```bash
+cargo run --release -- crawl -u "https://example.com" -d 2 --format json
+```
 
-### HTTP Fetcher
-- [x] Fetch page by URL
-- [x] Handle redirects
+### Advanced Crawl Constraints
 
-### HTML Parser (cancelled => now just writing a wraper of scraper)
-- [ ] Custom self-written parser (cancelled)
-- [ ] Build DOM tree (cancelled)
-- [x] Walk nodes with links (a, base, iframe, etc.)
-- [x] Extract and return URLs
+```bash
+# Cap crawling at 100 pages, limit requests to 30s timeout, and run 64 concurrent workers
+cargo run --release -- crawl -u "https://example.com" -l 100 -w 64 --timeout 30
+```
 
-### Graph (Current Crawl State)
-- [x] Graph data structure
-- [x] Per-node locks
-- [x] Lock ordering by node ID (ascending) to prevent deadlocks
+---
 
-### Tree (Post-Crawl)
-- [ ] Derive tree from graph after full crawl
-- [ ] Cycle detection during derivation
+## Options
+
+<details open>
+<summary><b>Crawl Command Options</b></summary>
+
+| Option | Description | Default |
+|:-------|:------------|:--------|
+| `-u, --url <URL>` | Seed URL to start crawling from | **Required** |
+| `-w, --workers <COUNT>` | Number of concurrent worker threads | `32` |
+| `-d, --depth <DEPTH>` | Max depth limit for recursively following links | `6` |
+| `-l, --page-limit <LIMIT>` | Maximum number of pages to crawl | Unlimited |
+| `--format <FORMAT>` | Output format: `json` \| `markdown` | `markdown` |
+| `--timeout <SECONDS>` | Timeout for individual HTTP requests | `10` |
+| `--crawl-timeout <SECONDS>` | Overall crawler timeout (graceful exit) | Unlimited |
+
+</details>
+
+---
+
+## Project Structure
+
+```
+crawlyx-rs/
+├── Cargo.toml            # Project manifest
+├── src/
+│   ├── main.rs           # CLI Entrypoint & Wiring
+│   ├── lib.rs            # Library interface
+│   ├── state.rs          # Shared CrawlState struct
+│   ├── work.rs           # WorkUnit definition
+│   ├── dispatcher.rs     # Event-driven worker coordinator
+│   ├── worker/
+│   │   └── mod.rs        # HTML/Readability extraction worker
+│   ├── fetcher/
+│   │   └── mod.rs        # Async client with Keep-Alive connection pooling
+│   ├── queue/
+│   │   ├── mod.rs        # Queue trait definitions
+│   │   └── inprocess.rs  # In-process tokio channel queue
+│   ├── hashtable/
+│   │   └── mod.rs        # Sharded AHash lock visited table
+│   ├── graph/
+│   │   └── mod.rs        # Thread-safe crawl graph implementation
+│   ├── tree.rs           # Post-crawl tree derivation
+│   ├── parser/
+│   │   └── mod.rs        # HTML link extractor
+│   ├── normalizer/
+│   │   └── mod.rs        # URL normalizer rules
+│   └── output/
+│       └── mod.rs        # JSON and Markdown formatters
+```
+
+---
+
+
+
+<p align="center">
+  <sub>Star ⭐ this repo if you found it useful!</sub>
+</p>
