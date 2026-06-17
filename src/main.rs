@@ -98,7 +98,15 @@ async fn main() {
         use futures::StreamExt;
 
         let mut builder = BrowserConfig::builder();
-        builder = builder.args(vec!["--no-sandbox", "--disable-setuid-sandbox"]);
+        builder = builder.args(vec![
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+            "--disable-extensions",
+            "--blink-settings=imagesEnabled=false",
+            "--js-flags=--max-old-space-size=512"
+        ]);
 
         if let Some(path) = crawl.chrome_path {
             builder = builder.chrome_executable(path);

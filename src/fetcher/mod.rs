@@ -85,8 +85,40 @@ impl Fetcher {
                 Ok((body, status_code))
             }
             FetcherBackend::Headless(browser) => {
-                let page = browser.new_page(url).await.map_err(|e| FetchError::BrowserError(e.to_string()))?;
+                // Open a blank page first so we can configure network domain settings before navigating
+                let page = browser.new_page("about:blank").await.map_err(|e| FetchError::BrowserError(e.to_string()))?;
+                
+                // Enable network domain and set blocked URL patterns (CSS, images, webfonts, trackers)
+                use chromiumoxide::cdp::browser_protocol::network::{EnableParams, SetBlockedUrLsParams, BlockPattern};
+                page.execute(EnableParams::default()).await.map_err(|e| FetchError::BrowserError(e.to_string()))?;
+                
+                let block_patterns = vec![
+                    BlockPattern { url_pattern: "*://*/*.css".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*/*.png".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*/*.jpg".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*/*.jpeg".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*/*.gif".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*/*.svg".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*/*.woff*".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*/*.ttf".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*/*.ico".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*/*.mp4".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*/*.webm".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*/*.ogg".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*doubleclick.net/*".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*google-analytics.com/*".to_string(), block: true },
+                    BlockPattern { url_pattern: "*://*googletagmanager.com/*".to_string(), block: true },
+                ];
+
+                let block_params = SetBlockedUrLsParams {
+                    url_patterns: Some(block_patterns),
+                };
+                page.execute(block_params).await.map_err(|e| FetchError::BrowserError(e.to_string()))?;
+                
+                // Navigate to the target URL
+                page.goto(url).await.map_err(|e| FetchError::BrowserError(e.to_string()))?;
                 page.wait_for_navigation().await.map_err(|e| FetchError::BrowserError(e.to_string()))?;
+                
                 let body = page.content().await.map_err(|e| FetchError::BrowserError(e.to_string()))?;
                 let _ = page.close().await;
                 Ok((body, 200))
