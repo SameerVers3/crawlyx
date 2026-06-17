@@ -1,4 +1,5 @@
 use std::time::Duration;
+use std::sync::Arc;
 use reqwest::Client;
 use chromiumoxide::Browser;
 
@@ -40,6 +41,7 @@ pub enum FetcherBackend {
 
 pub struct Fetcher {
     backend: FetcherBackend,
+    tab_semaphore: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 impl Fetcher {
@@ -60,12 +62,14 @@ impl Fetcher {
     
         Self {
             backend: FetcherBackend::Reqwest(client),
+            tab_semaphore: None,
         }
     }
 
-    pub fn new_headless(browser: Browser) -> Self {
+    pub fn new_headless(browser: Browser, max_concurrency: usize) -> Self {
         Self {
             backend: FetcherBackend::Headless(browser),
+            tab_semaphore: Some(Arc::new(tokio::sync::Semaphore::new(max_concurrency))),
         }
     }
 
@@ -85,6 +89,13 @@ impl Fetcher {
                 Ok((body, status_code))
             }
             FetcherBackend::Headless(browser) => {
+                // Acquire permit before opening a page tab (decouples worker concurrency from RAM usage)
+                let _permit = if let Some(sem) = &self.tab_semaphore {
+                    Some(sem.acquire().await.unwrap())
+                } else {
+                    None
+                };
+
                 // Open a blank page first so we can configure network domain settings before navigating
                 let page = browser.new_page("about:blank").await.map_err(|e| FetchError::BrowserError(e.to_string()))?;
                 

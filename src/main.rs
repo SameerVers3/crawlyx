@@ -58,6 +58,10 @@ struct CrawlArgs {
     /// Custom path to the Chrome/Chromium executable
     #[arg(long)]
     chrome_path: Option<String>,
+
+    /// Maximum concurrent browser tabs open in headless mode
+    #[arg(long, default_value_t = 4)]
+    headless_concurrency: usize,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -127,7 +131,7 @@ async fn main() {
             }
         });
 
-        Arc::new(Fetcher::new_headless(browser))
+        Arc::new(Fetcher::new_headless(browser, crawl.headless_concurrency))
     } else {
         Arc::new(Fetcher::new_reqwest(
             "crawlyx-rs/0.1",
