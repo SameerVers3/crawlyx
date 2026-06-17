@@ -50,6 +50,14 @@ struct CrawlArgs {
     /// Total crawl timeout in seconds
     #[arg(long)]
     crawl_timeout: Option<u64>,
+
+    /// Enable headless browser mode using chromiumoxide (allows JS execution)
+    #[arg(long)]
+    headless: bool,
+
+    /// Custom path to the Chrome/Chromium executable
+    #[arg(long)]
+    chrome_path: Option<String>,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -85,10 +93,39 @@ async fn main() {
     let queue = InProcessQueue::new(2048);
     let graph = Arc::new(Graph::new(crawl.url.clone()));
     
-    let fetcher = Arc::new(Fetcher::new(
-        "crawlyx-rs/0.1",
-        Some(Duration::from_secs(crawl.timeout)),
-    ));
+    let fetcher = if crawl.headless {
+        use chromiumoxide::{Browser, BrowserConfig};
+        use futures::StreamExt;
+
+        let mut builder = BrowserConfig::builder();
+        builder = builder.args(vec!["--no-sandbox", "--disable-setuid-sandbox"]);
+
+        if let Some(path) = crawl.chrome_path {
+            builder = builder.chrome_executable(path);
+        }
+
+        let config = builder.build().expect("failed to build browser config");
+
+        let (browser, mut handler) = Browser::launch(config)
+            .await
+            .expect("failed to launch headless browser");
+
+        tokio::spawn(async move {
+            while let Some(res) = handler.next().await {
+                if let Err(e) = res {
+                    eprintln!("Browser handler error: {:?}", e);
+                    break;
+                }
+            }
+        });
+
+        Arc::new(Fetcher::new_headless(browser))
+    } else {
+        Arc::new(Fetcher::new_reqwest(
+            "crawlyx-rs/0.1",
+            Some(Duration::from_secs(crawl.timeout)),
+        ))
+    };
 
     let state = Arc::new(CrawlState {
         visited: Arc::clone(&visited),

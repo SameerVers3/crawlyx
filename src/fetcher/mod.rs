@@ -1,11 +1,13 @@
 use std::time::Duration;
 use reqwest::Client;
+use chromiumoxide::Browser;
 
 #[derive(Debug)]
 pub enum FetchError {
     Network(reqwest::Error),
     BadStatus(u16),
     Timeout,
+    BrowserError(String),
 }
 
 impl std::fmt::Display for FetchError {
@@ -14,6 +16,7 @@ impl std::fmt::Display for FetchError {
             FetchError::Network(e) => write!(f, "network error: {}", e),
             FetchError::BadStatus(s) => write!(f, "bad status: {}", s),
             FetchError::Timeout => write!(f, "request timed out"),
+            FetchError::BrowserError(e) => write!(f, "browser error: {}", e),
         }
     }
 }
@@ -30,12 +33,17 @@ impl From<reqwest::Error> for FetchError {
     }
 }
 
+pub enum FetcherBackend {
+    Reqwest(Client),
+    Headless(Browser),
+}
+
 pub struct Fetcher {
-    client: Client,
+    backend: FetcherBackend,
 }
 
 impl Fetcher {
-    pub fn new(user_agent: &str, timeout: Option<Duration>) -> Self {
+    pub fn new_reqwest(user_agent: &str, timeout: Option<Duration>) -> Self {
         let mut builder = Client::builder()
             .user_agent(user_agent.to_string())
             .redirect(reqwest::redirect::Policy::limited(10))
@@ -51,22 +59,39 @@ impl Fetcher {
         let client = builder.build().expect("failed to build HTTP client");
     
         Self {
-            client
+            backend: FetcherBackend::Reqwest(client),
+        }
+    }
+
+    pub fn new_headless(browser: Browser) -> Self {
+        Self {
+            backend: FetcherBackend::Headless(browser),
         }
     }
 
     pub async fn fetch(&self, url: &str) -> Result<(String, u16), FetchError> {
-        let response = self.client.get(url).send().await?;
+        match &self.backend {
+            FetcherBackend::Reqwest(client) => {
+                let response = client.get(url).send().await?;
 
-        let status = response.status();
-        let status_code = status.as_u16();
-        if !status.is_success() {
-            return Err(FetchError::BadStatus(status_code));
+                let status = response.status();
+                let status_code = status.as_u16();
+                if !status.is_success() {
+                    return Err(FetchError::BadStatus(status_code));
+                }
+
+                let body = response.text().await?;
+
+                Ok((body, status_code))
+            }
+            FetcherBackend::Headless(browser) => {
+                let page = browser.new_page(url).await.map_err(|e| FetchError::BrowserError(e.to_string()))?;
+                page.wait_for_navigation().await.map_err(|e| FetchError::BrowserError(e.to_string()))?;
+                let body = page.content().await.map_err(|e| FetchError::BrowserError(e.to_string()))?;
+                let _ = page.close().await;
+                Ok((body, 200))
+            }
         }
-
-        let body = response.text().await?;
-
-        Ok((body, status_code))
     }
 }
 
@@ -88,7 +113,7 @@ mod tests {
             socket.write_all(response.as_bytes()).await.unwrap();
         });
 
-        let fetcher = Fetcher::new("Crawlyx/1.0", None);
+        let fetcher = Fetcher::new_reqwest("Crawlyx/1.0", None);
         let result = fetcher.fetch(&format!("http://{}", addr)).await;
         assert!(result.is_ok(), "fetch failed: {:?}", result.err());
         let (body, status) = result.unwrap();
@@ -109,7 +134,7 @@ mod tests {
             socket.write_all(response.as_bytes()).await.unwrap();
         });
 
-        let fetcher = Fetcher::new("Crawlyx/1.0", None);
+        let fetcher = Fetcher::new_reqwest("Crawlyx/1.0", None);
         let result = fetcher.fetch(&format!("http://{}", addr)).await;
         assert!(matches!(result, Err(FetchError::BadStatus(404))));
     }
@@ -140,14 +165,14 @@ mod tests {
             }
         });
 
-        let fetcher = Fetcher::new("Crawlyx/1.0", None);
+        let fetcher = Fetcher::new_reqwest("Crawlyx/1.0", None);
         let result = fetcher.fetch(&format!("http://{}", addr)).await;
         assert!(result.is_ok(), "redirect fetch failed: {:?}", result.err());
     }
 
     #[tokio::test]
     async fn fetch_invalid_url_returns_network_error() {
-        let fetcher = Fetcher::new("Crawlyx/1.0", None);
+        let fetcher = Fetcher::new_reqwest("Crawlyx/1.0", None);
         let result = fetcher.fetch("https://this-domain-does-not-exist-xyz.com").await;
         assert!(matches!(result, Err(FetchError::Network(_)) | Err(FetchError::Timeout)));
     }
