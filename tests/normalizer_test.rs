@@ -1,4 +1,4 @@
-use crawlyx_rs::normalizer::normalize;
+use crawlyx::normalizer::normalize;
 
 struct Case<'a> {
     input: &'a str,

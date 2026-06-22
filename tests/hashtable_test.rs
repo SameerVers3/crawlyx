@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::thread;
-use crawlyx_rs::hashtable::{VisitedTable, UrlState};
+use crawlyx::hashtable::{VisitedTable, UrlState};
 
 // Concurrent reads
 

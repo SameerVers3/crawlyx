@@ -67,14 +67,14 @@ Getting started with Rust involves installing the toolchain and writing a hello 
 
 ```bash
 # Clone the repository
-git clone https://github.com/SameerVers3/crawlyx-rs.git
-cd crawlyx-rs
+git clone https://github.com/SameerVers3/crawlyx.git
+cd crawlyx
 
 # Build optimized release binary
 cargo build --release
 
 # Run
-./target/release/crawlyx_rs --help
+./target/release/crawlyx --help
 ```
 
 ---
@@ -124,7 +124,7 @@ cargo run --release -- crawl -u "https://example.com" -l 100 -w 64 --timeout 30
 ## Project Structure
 
 ```
-crawlyx-rs/
+crawlyx/
 ├── Cargo.toml            # Project manifest
 ├── src/
 │   ├── main.rs           # CLI Entrypoint & Wiring

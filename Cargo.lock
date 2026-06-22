@@ -536,7 +536,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "crawlyx_rs"
+name = "crawlyx"
 version = "0.1.0"
 dependencies = [
  "ahash",

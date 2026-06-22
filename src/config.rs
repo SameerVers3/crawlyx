@@ -69,7 +69,7 @@ impl CrawlConfig {
             keep_extension: false,
             respect_robots_txt: false,
             crawl_delay: None,
-            user_agent: "crawlyx-rs/0.1".to_string(),
+            user_agent: "crawlyx/0.1".to_string(),
         }
     }
 }

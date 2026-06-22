@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use clap::{Parser, ValueEnum};
 use url::Url;
 
-use crawlyx_rs::{
+use crawlyx::{
     state::CrawlState,
     work::WorkUnit,
     hashtable::VisitedTable,
@@ -134,7 +134,7 @@ async fn main() {
         Arc::new(Fetcher::new_headless(browser, crawl.headless_concurrency))
     } else {
         Arc::new(Fetcher::new_reqwest(
-            "crawlyx-rs/0.1",
+            "crawlyx/0.1",
             Some(Duration::from_secs(crawl.timeout)),
         ))
     };
@@ -172,7 +172,7 @@ async fn main() {
     });
 
     // Run the dispatcher with optional crawl timeout
-    let dispatcher_future = crawlyx_rs::dispatcher::run_dispatcher(Arc::clone(&state), crawl.workers);
+    let dispatcher_future = crawlyx::dispatcher::run_dispatcher(Arc::clone(&state), crawl.workers);
     
     let start_time = Instant::now();
     if let Some(t_limit) = crawl.crawl_timeout {
@@ -194,11 +194,11 @@ async fn main() {
     let duration = start_time.elapsed();
 
     // Derive tree from graph
-    if let Some(tree) = crawlyx_rs::tree::derive_tree(&graph, &start_url_str) {
+    if let Some(tree) = crawlyx::tree::derive_tree(&graph, &start_url_str) {
         // Format and print output
         let output = match crawl.format {
-            OutputFormatArg::Json => crawlyx_rs::output::format_json(&tree),
-            OutputFormatArg::Markdown => crawlyx_rs::output::format_markdown(&graph, &tree),
+            OutputFormatArg::Json => crawlyx::output::format_json(&tree),
+            OutputFormatArg::Markdown => crawlyx::output::format_markdown(&graph, &tree),
         };
         println!("{}", output);
     } else {
